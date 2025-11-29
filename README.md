@@ -139,12 +139,12 @@ pip install discord.py mcstatus websockets requests colorama
 
 ### Start Python Minecraft Bot
 ```bash
-pm2 start bot.py --name mc-bot
+pm2 start bot.js --name mc-bot
 ```
 
 ### Start Discord JS Bot
 ```bash
-pm2 start bot.js --name discordBot
+pm2 start bot.py --name discordBot
 ```
 
 ### Save PM2 Startup
@@ -158,6 +158,11 @@ pm2 startup
 # 📊 7. Check Bot Status
 ```bash
 pm2 list
+```
+
+# 🟢 Run Bot (Mission Completed!)
+```bash
+pm2 start all
 ```
 
 🟢 **online** = running  
