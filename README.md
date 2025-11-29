@@ -100,7 +100,7 @@ Paste:
 ```json
 {
   "discord_token": "YOUR_DISCORD_TOKEN_HERE",
-  "default_admin_id": ADMIN ID # (REPLACE YOURS),
+  "default_admin_id": ADMIN ID,
   "guild_id": null,
   "presence": [
     "Watching Aternos 24/7",
