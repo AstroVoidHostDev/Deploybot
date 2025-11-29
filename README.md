@@ -99,11 +99,22 @@ Paste:
 
 ```json
 {
-  "token": "YOUR_DISCORD_BOT_TOKEN",
-  "guild": "YOUR_GUILD_ID",
-  "minecraft_ip": "SERVER_IP",
-  "minecraft_port": 25565
+  "discord_token": "YOUR_DISCORD_TOKEN_HERE",
+  "default_admin_id": ADMIN ID (REPLACE YOURS),
+  "guild_id": null,
+  "presence": [
+    "Watching Aternos 24/7",
+    "Subscribe to ITZ_YTANSH",
+    "Free Making Aternos 24/7",
+    "AstroVoid Bot Aternos"
+  ],
+  "mc_defaults": {
+    "username": "ITX_YTANXH",
+    "version": "1.21.1"
+  },
+  "process_prefix": "ITX_YTANXH"
 }
+
 ```
 
 Save and exit.
