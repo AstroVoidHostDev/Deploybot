@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img src="https://auto.creavite.co/api/out/yP1nHOPHdIvKt6i27r_standard.webm" width="440">
+  <img src="[https://auto.creavite.co/api/out/yP1nHOPHdIvKt6i27r_standard.webm](https://media.discordapp.net/attachments/1418220751156285532/1444389198726565988/standard_4.gif?ex=692c87c4&is=692b3644&hm=210ee0171c22d57d08be9e71a1f75f2ff1f5dc64f664dde7a16ea63f34bbc4f6&=&width=748&height=264)" width="440">
 </p>
 
 <h1 align="center">⚡ ITX_YTANXH – Dual Discord × Minecraft Bot System ⚡</h1>
