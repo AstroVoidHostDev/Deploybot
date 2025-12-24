@@ -67,7 +67,7 @@ You must create **3 files**:
 | File | Purpose |
 |------|---------|
 | `bot.py` | Python Minecraft Bot |
-| `bot.js` | Discord Slash Bot |
+| `mc_bot.js` | Discord Slash Bot |
 | `config.json` | Settings |
 
 ---
@@ -83,7 +83,7 @@ Save → **CTRL + O → ENTER → CTRL + X**
 
 ## ✏️ 3.2 Create `bot.js`
 ```bash
-nano bot.js
+nano mc_bot.js
 ```
 Paste your working JS bot code.  
 Save → **CTRL + O → ENTER → CTRL + X**
