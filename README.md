@@ -194,15 +194,8 @@ ITX_YTANXH
 
 # 🖤 Support & Upgrades
 
-If you want:
-- Full Minecraft chat → Discord sync  
-- Web dashboard  
-- Anti-cheat alerts  
-- Join/Leave logging  
-- Auto-restart on MC crash  
-- More slash commands  
-
-Just ask — I will upgrade it 🔥
+Subscribe itz_ytansh On Youtube
+https://www.youtube.com/@ITZ_YT_ANSH_OFFICIAL 🔥
 
 ---
 
