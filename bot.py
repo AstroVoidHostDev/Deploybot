@@ -19,11 +19,14 @@ DEFAULT_ADMIN = int(CFG.get("default_admin_id", 0))
 GUILD_ID = CFG.get("guild_id")  # None => global
 PRESENCES = CFG.get("presence", ["Watching Aternos 24/7"])
 MC_DEFAULT_USERNAME = CFG.get("mc_defaults", {}).get("username", "ITX_YTANXH")
+MC_DEFAULT_PASSWORD = CFG.get("mc_defaults", {}).get("password", None)  # optional
 MC_DEFAULT_VERSION = CFG.get("mc_defaults", {}).get("version", "1.21.1")
 PROCESS_PREFIX = CFG.get("process_prefix", "ITX_YTANXH")
 
 ADMINS_FILE = "admins.json"
 MONITORS_FILE = "monitors.json"
+
+MC_BOT_PATH = os.path.abspath("mc_bot.js")  # absolute path for PM2 / node
 
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="/", intents=intents)
@@ -64,9 +67,12 @@ def pm2_available() -> bool:
     except Exception:
         return False
 
-def pm2_start(process_name: str, ip: str, port: int, version: str, username: str) -> bool:
+def pm2_start(process_name: str, ip: str, port: int, version: str, username: str, password: Optional[str] = None) -> bool:
     try:
-        cmd = ["pm2", "start", "mc_bot.js", "--name", process_name, "--", ip, str(port), version, username]
+        # Use absolute path and pass password as last arg
+        cmd = ["pm2", "start", MC_BOT_PATH, "--name", process_name, "--", ip, str(port), version, username]
+        if password:
+            cmd.append(password)
         res = subprocess.run(cmd, capture_output=True, text=True)
         if res.returncode != 0:
             print("pm2 start failed:", res.stdout, res.stderr)
@@ -85,10 +91,13 @@ def pm2_delete(process_name: str) -> bool:
     except Exception:
         return False
 
-def spawn_node_background(ip: str, port: int, version: str, username: str, process_name: str) -> bool:
+def spawn_node_background(ip: str, port: int, version: str, username: str, process_name: str, password: Optional[str] = None) -> bool:
     # fallback: spawn detached node process with PROCESS_NAME in argv so we can identify it
     try:
-        cmd = ["node", "mc_bot.js", ip, str(port), version, username, process_name]
+        cmd = ["node", MC_BOT_PATH, ip, str(port), version, username]
+        if password:
+            cmd.append(password)
+        cmd.append(process_name)
         subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
         return True
     except Exception as e:
@@ -208,13 +217,14 @@ async def cmd_monitor(interaction: discord.Interaction, ip: str, port: int, vers
 
     pname = make_process_name()
     username = MC_DEFAULT_USERNAME
+    password = MC_DEFAULT_PASSWORD
     started = False
 
     if pm2_available():
-        started = pm2_start(pname, ip, port, version, username)
+        started = pm2_start(pname, ip, port, version, username, password)
     if not started:
         # fallback: spawn node with process name appended as last arg
-        started = spawn_node_background(ip, port, version, username, pname)
+        started = spawn_node_background(ip, port, version, username, pname, password)
 
     if not started:
         await interaction.response.send_message("❌ Failed to start mc bot (pm2/node error). Check host logs.", ephemeral=True)
