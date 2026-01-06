@@ -139,7 +139,7 @@ pip install discord.py mcstatus websockets requests colorama
 
 ### Start Python Minecraft Bot
 ```bash
-pm2 start bot.js --name mc-bot
+pm2 start mc_bot.js --name mc-bot
 ```
 
 ### Start Discord JS Bot
