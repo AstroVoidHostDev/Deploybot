@@ -1,313 +1,259 @@
-# bot.py
-import json
-import subprocess
-import time
-import os
-from itertools import cycle
-from typing import Dict, Optional
-
+#bot.py for ticketbot By ITZ_YTANSH
+from dotenv import load_dotenv
 import discord
-from discord import app_commands
-from discord.ext import commands, tasks
+from discord.ext import commands
+import json, os, io, asyncio
+from datetime import datetime
 
-# ---------------- load config ----------------
-with open("config.json", "r") as f:
-    CFG = json.load(f)
+# ===== ENV =====
+load_dotenv()
+TOKEN = os.getenv("BOT_TOKEN")
+BOT_NAME = os.getenv("TICKET_BOT_NAME", "Ticket Bot")
 
-TOKEN = CFG["discord_token"]
-DEFAULT_ADMIN = int(CFG.get("default_admin_id", 0))
-GUILD_ID = CFG.get("guild_id")  # None => global
-PRESENCES = CFG.get("presence", ["Watching Aternos 24/7"])
-MC_DEFAULT_USERNAME = CFG.get("mc_defaults", {}).get("username", "ITX_YTANXH")
-MC_DEFAULT_PASSWORD = CFG.get("mc_defaults", {}).get("password", None)  # optional
-MC_DEFAULT_VERSION = CFG.get("mc_defaults", {}).get("version", "1.21.1")
-PROCESS_PREFIX = CFG.get("process_prefix", "ITX_YTANXH")
+# ===== CONFIG =====
+def load_config():
+    if not os.path.exists("config.json"):
+        with open("config.json", "w") as f:
+            json.dump({"servers": {}}, f)
+    return json.load(open("config.json"))
 
-ADMINS_FILE = "admins.json"
-MONITORS_FILE = "monitors.json"
+def save_config(data):
+    json.dump(data, open("config.json", "w"), indent=4)
 
-MC_BOT_PATH = os.path.abspath("mc_bot.js")  # absolute path for PM2 / node
+config = load_config()
 
-intents = discord.Intents.default()
-bot = commands.Bot(command_prefix="/", intents=intents)
-tree: app_commands.CommandTree = bot.tree
+# ===== BOT =====
+intents = discord.Intents.all()
+bot = commands.Bot(command_prefix=".", intents=intents)
 
-presence_cycle = cycle(PRESENCES)
-admins = set()
-monitors: Dict[str, Dict] = {}  # key: process_name -> {owner, ip, port, version, ts_started}
+# ===== ADMIN CHECK =====
+async def is_admin(member):
+    return member.guild_permissions.administrator
 
-# ---------------- persistence ----------------
-def load_json(path, default):
-    try:
-        with open(path, "r") as f:
-            return json.load(f)
-    except Exception:
-        return default
+# =========================
+# 🎯 DROPDOWN SELECT
+# =========================
+class TicketDropdown(discord.ui.Select):
+    def __init__(self):
+        options = [
+            discord.SelectOption(label="Support", emoji="🛠️"),
+            discord.SelectOption(label="Bug Report", emoji="🐞"),
+            discord.SelectOption(label="Purchase", emoji="💰"),
+            discord.SelectOption(label="Other", emoji="📩"),
+        ]
+        super().__init__(
+            placeholder="Select Ticket Category",
+            min_values=1,
+            max_values=1,
+            options=options
+        )
 
-def save_json(path, data):
-    with open(path, "w") as f:
-        json.dump(data, f, indent=2)
+    async def callback(self, interaction: discord.Interaction):
+        guild = interaction.guild
+        user = interaction.user
+        choice = self.values[0]
 
-def load_state():
-    global admins, monitors
-    a = load_json(ADMINS_FILE, [])
-    admins = set(int(x) for x in a) if a else set()
-    admins.add(DEFAULT_ADMIN)
-    monitors = load_json(MONITORS_FILE, {})
+        data = config["servers"].get(str(guild.id), {})
+        category = discord.utils.get(guild.categories, id=data.get("category_id"))
 
-def save_state():
-    save_json(ADMINS_FILE, list(admins))
-    save_json(MONITORS_FILE, monitors)
+        if not category:
+            await interaction.response.send_message("❌ Setup nahi hua!", ephemeral=True)
+            return
 
-# ---------------- PM2 helpers ----------------
-def pm2_available() -> bool:
-    try:
-        subprocess.run(["pm2", "ping"], capture_output=True, timeout=3)
-        return True
-    except Exception:
-        return False
+        # already ticket check
+        for ch in category.channels:
+            if str(user.id) in ch.name:
+                await interaction.response.send_message("❌ Already ticket open!", ephemeral=True)
+                return
 
-def pm2_start(process_name: str, ip: str, port: int, version: str, username: str, password: Optional[str] = None) -> bool:
-    try:
-        # Use absolute path and pass password as last arg
-        cmd = ["pm2", "start", MC_BOT_PATH, "--name", process_name, "--", ip, str(port), version, username]
-        if password:
-            cmd.append(password)
-        res = subprocess.run(cmd, capture_output=True, text=True)
-        if res.returncode != 0:
-            print("pm2 start failed:", res.stdout, res.stderr)
-            return False
-        return True
-    except FileNotFoundError:
-        return False
-    except Exception as e:
-        print("pm2_start exception:", e)
-        return False
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(read_messages=False),
+            user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
+            guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True)
+        }
 
-def pm2_delete(process_name: str) -> bool:
-    try:
-        res = subprocess.run(["pm2", "delete", process_name], capture_output=True, text=True)
-        return res.returncode == 0
-    except Exception:
-        return False
+        channel = await guild.create_text_channel(
+            name=f"{choice.lower()}-{user.id}",
+            category=category,
+            overwrites=overwrites
+        )
 
-def spawn_node_background(ip: str, port: int, version: str, username: str, process_name: str, password: Optional[str] = None) -> bool:
-    # fallback: spawn detached node process with PROCESS_NAME in argv so we can identify it
-    try:
-        cmd = ["node", MC_BOT_PATH, ip, str(port), version, username]
-        if password:
-            cmd.append(password)
-        cmd.append(process_name)
-        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-        return True
-    except Exception as e:
-        print("spawn_node_background error:", e)
-        return False
+        embed = discord.Embed(
+            title=f"🎟️ {choice} Ticket",
+            description=f"{user.mention}, explain your issue.\nStaff will help you soon 🚀",
+            color=discord.Color.green()
+        )
+        embed.set_footer(text=f"{BOT_NAME} ⚡ | {datetime.now().strftime('%d/%m %H:%M')}")
 
-def pm2_jlist() -> list:
-    try:
-        out = subprocess.check_output(["pm2", "jlist"], text=True)
-        return json.loads(out)
-    except Exception:
-        return []
+        await channel.send(embed=embed, view=CloseView())
+        await interaction.response.send_message(f"✅ Ticket Created: {channel.mention}", ephemeral=True)
 
-def pm2_is_running(name: str) -> bool:
-    for p in pm2_jlist():
+# =========================
+# VIEW
+# =========================
+class TicketView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.add_item(TicketDropdown())
+
+# =========================
+# CLOSE + CLAIM
+# =========================
+class CloseView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.claimed_by = None
+
+    @discord.ui.button(label="👑 Claim Ticket", style=discord.ButtonStyle.primary)
+    async def claim(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await is_admin(interaction.user):
+            await interaction.response.send_message("❌ Only staff!", ephemeral=True)
+            return
+
+        channel = interaction.channel
+
+        # add ✔ to name
+        if "✔" not in channel.name:
+            await channel.edit(name=f"✔-{channel.name}")
+
+        self.claimed_by = interaction.user
+
+        await interaction.response.send_message(
+            f"✅ Ticket claimed by {interaction.user.mention}"
+        )
+
+    @discord.ui.button(label="🔒 Close Ticket", style=discord.ButtonStyle.danger)
+    async def close(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await is_admin(interaction.user):
+            await interaction.response.send_message("❌ Only staff!", ephemeral=True)
+            return
+
+        channel = interaction.channel
+
+        # get ticket user
         try:
-            if p.get("name") == name and p.get("pm2_env", {}).get("status") == "online":
-                return True
-        except Exception:
-            continue
-    return False
+            user_id = int(channel.name.split("-")[-1])
+            ticket_user = await bot.fetch_user(user_id)
+        except:
+            ticket_user = None
 
-# ---------------- process naming ----------------
-def make_process_name() -> str:
-    # produce next available name like PREFIX_1, PREFIX_2 ...
-    existing = set(monitors.keys())
-    n = 1
+        # transcript
+        msgs = []
+        async for m in channel.history(limit=200, oldest_first=True):
+            msgs.append(f"{m.author}: {m.content}")
+
+        file = discord.File(io.StringIO("\n".join(msgs)), filename=f"{channel.name}.txt")
+
+        # DM only
+        if ticket_user:
+            try:
+                embed = discord.Embed(
+                    title="📩 Ticket Closed",
+                    description=f"Your ticket `{channel.name}` has been closed.",
+                    color=discord.Color.orange()
+                )
+                if self.claimed_by:
+                    embed.add_field(name="Claimed By", value=self.claimed_by.mention)
+
+                await ticket_user.send(embed=embed, file=file)
+            except:
+                pass
+
+        await interaction.response.send_message("Closing...", ephemeral=True)
+        await channel.delete()
+
+# =========================
+# AUTO CLOSE (3 DAYS)
+# =========================
+async def auto_close():
+    await bot.wait_until_ready()
+
     while True:
-        name = f"{PROCESS_PREFIX}_{n}"
-        if name not in existing and not pm2_is_running(name):
-            return name
-        n += 1
+        for guild in bot.guilds:
+            data = config["servers"].get(str(guild.id), {})
+            category = discord.utils.get(guild.categories, id=data.get("category_id"))
 
-# ---------------- monitors status ----------------
-def get_monitors_with_state() -> Dict[str, Dict]:
-    result = {}
-    for pname, info in monitors.items():
-        running = pm2_is_running(pname) if pm2_available() else False
-        result[pname] = {**info, "running": running}
-    return result
+            if not category:
+                continue
 
-# ---------------- events / tasks ----------------
+            for ch in category.channels:
+                # skip claimed
+                if "✔" in ch.name:
+                    continue
+
+                # 3 days
+                if (discord.utils.utcnow() - ch.created_at).days >= 3:
+                    try:
+                        await ch.delete()
+                    except:
+                        pass
+
+        await asyncio.sleep(3600)
+
+# =========================
+# SETUP
+# =========================
+@bot.tree.command(name="setup")
+@commands.has_permissions(administrator=True)
+async def setup(interaction: discord.Interaction, category: discord.CategoryChannel):
+    config["servers"][str(interaction.guild.id)] = {
+        "category_id": category.id
+    }
+    save_config(config)
+    await interaction.response.send_message("✅ Setup Done!", ephemeral=True)
+
+# =========================
+# 🔥 ULTRA PANEL
+# =========================
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def panel(ctx):
+    embed = discord.Embed(
+        title=f"🎟️ {BOT_NAME} Menu",
+        description=(
+                "✨ **Welcome to Our Professional Support Hub** ✨\n\n"
+
+                "🔮 **Getting Started:**\n"
+                "📋 Please take a moment to review our `FAQ` and Guidelines before submitting a request to ensure faster assistance\n" 
+                "🚀 Our `dedicated` support team strives to respond as quickly as `possible`, typically within minutes\n"  
+                "🎯 Choose the appropriate ticket category below to help us understand and resolve your issue efficiently\n"  
+                "🛡️ Kindly maintain one ticket per `issue` to keep support organized and effective\n\n"  
+
+                "💼 **Our Commitment:**\n"  
+                "We are dedicated to providing reliable, high-quality support and ensuring every user receives the best possible experience.\n\n"
+
+               "💎 *Delivering excellence with every interaction — we’re here to `help`!*\n"
+    
+        ),
+        color=discord.Color.purple()
+    )
+
+    embed.set_image(url="https://media.discordapp.net/attachments/1406117175974039602/1490014504891715736/standard_1.gif?ex=69d283a5&is=69d13225&hm=9003f130a1587e999c5d8932e7c2b473e81e5ccc60a63f31851e562801d5ae4d&=&width=550&height=309")
+    embed.set_footer(text=f"{BOT_NAME} ⚡ | Ultimate Tickets")
+
+    await ctx.send(embed=embed, view=TicketView())
+
+
+# =========================
+# READY
+# =========================
 @bot.event
 async def on_ready():
-    load_state()
-    print("Bot ready:", bot.user)
-    try:
-        if GUILD_ID:
-            await tree.sync(guild=discord.Object(id=int(GUILD_ID)))
-            print("Synced to guild", GUILD_ID)
-        else:
-            await tree.sync()
-            print("Global commands sync called (may take up to 1 hour to propagate).")
-    except Exception as e:
-        print("Command sync error:", e)
-    rotate_presence.start()
+    print(f"🔥 Logged in as {bot.user}")
 
-@tasks.loop(seconds=8.0)
-async def rotate_presence():
-    try:
-        await bot.change_presence(activity=discord.Game(next(presence_cycle)))
-    except Exception:
-        pass
+    # 🎯 BOT STATUS
+    await bot.change_presence(
+        activity=discord.Activity(
+            type=discord.ActivityType.watching,
+            name=f"{BOT_NAME}"
+        ),
+        status=discord.Status.online
+    )
 
-def is_admin(user: discord.User) -> bool:
-    return int(user.id) in admins
+    bot.loop.create_task(auto_close())
+    await bot.tree.sync()
 
-# ---------------- slash commands ----------------
-@tree.command(name="admin", description="Grant admin to a user (admins only)")
-@app_commands.describe(member="User to grant admin")
-async def cmd_admin(interaction: discord.Interaction, member: discord.Member):
-    if not is_admin(interaction.user):
-        await interaction.response.send_message("❌ You are not authorized.", ephemeral=True)
-        return
-    admins.add(int(member.id))
-    save_state()
-    await interaction.response.send_message(f"✅ {member.mention} is now an admin.")
-
-@tree.command(name="unadmin", description="Remove admin from a user (admins only)")
-@app_commands.describe(member="User to remove admin")
-async def cmd_unadmin(interaction: discord.Interaction, member: discord.Member):
-    if not is_admin(interaction.user):
-        await interaction.response.send_message("❌ You are not authorized.", ephemeral=True)
-        return
-    if int(member.id) == int(DEFAULT_ADMIN):
-        await interaction.response.send_message("❗ Cannot remove default admin.", ephemeral=True)
-        return
-    admins.discard(int(member.id))
-    save_state()
-    await interaction.response.send_message(f"✅ Removed admin: {member.mention}")
-
-@tree.command(name="list", description="List admins and active monitors")
-async def cmd_list(interaction: discord.Interaction):
-    admin_lines = [f"<@{a}>" for a in sorted(admins)]
-    admin_text = "\n".join(admin_lines) if admin_lines else "No admins"
-    mon = get_monitors_with_state()
-    if mon:
-        mon_lines = []
-        for pname, info in mon.items():
-            owner = info.get("owner", "Unknown")
-            running = "🟢" if info.get("running") else "🔴"
-            mon_lines.append(f"{running} <@{owner}> → `{info.get('ip','?')}:{info.get('port','?')}` ({info.get('version','?')}) | `{pname}`")
-        monitors_text = "\n".join(mon_lines)
-    else:
-        monitors_text = "No active monitors"
-    embed = discord.Embed(title="📋 Admins & Monitors", color=0x00ccff)
-    embed.add_field(name="👑 Admins", value=admin_text, inline=False)
-    embed.add_field(name="🛰 Monitors", value=monitors_text, inline=False)
-    await interaction.response.send_message(embed=embed)
-
-@tree.command(name="monitor", description="Start a Minecraft monitor (admin only)")
-@app_commands.describe(ip="Server IP/domain", port="Server port", version="MC version (eg. 1.21.1)")
-async def cmd_monitor(interaction: discord.Interaction, ip: str, port: int, version: str):
-    if not is_admin(interaction.user):
-        await interaction.response.send_message("❌ Only admins can start monitors.", ephemeral=True)
-        return
-
-    pname = make_process_name()
-    username = MC_DEFAULT_USERNAME
-    password = MC_DEFAULT_PASSWORD
-    started = False
-
-    if pm2_available():
-        started = pm2_start(pname, ip, port, version, username, password)
-    if not started:
-        # fallback: spawn node with process name appended as last arg
-        started = spawn_node_background(ip, port, version, username, pname, password)
-
-    if not started:
-        await interaction.response.send_message("❌ Failed to start mc bot (pm2/node error). Check host logs.", ephemeral=True)
-        return
-
-    monitors[pname] = {
-        "owner": str(interaction.user.id),
-        "ip": ip,
-        "port": int(port),
-        "version": version,
-        "process": pname,
-        "ts_started": int(time.time())
-    }
-    save_state()
-    await interaction.response.send_message(f"✅ Started monitor `{pname}` for `{ip}:{port}` as `{username}`.")
-
-@tree.command(name="unmonitor", description="Stop a monitor (admins or owner)")
-@app_commands.describe(process="Process name to stop (leave empty to stop your most recent)")
-async def cmd_unmonitor(interaction: discord.Interaction, process: Optional[str] = None):
-    caller = str(interaction.user.id)
-
-    if process:
-        info = monitors.get(process)
-        if not info:
-            await interaction.response.send_message("❌ No such monitor/process.", ephemeral=True)
-            return
-        owner = info.get("owner")
-    else:
-        # find most recent monitor owned by caller
-        owned = [(k, v) for k, v in monitors.items() if v.get("owner") == caller]
-        if not owned:
-            await interaction.response.send_message("❌ You have no active monitors.", ephemeral=True)
-            return
-        owned.sort(key=lambda it: it[1].get("ts_started", 0), reverse=True)
-        process, info = owned[0]
-        owner = info.get("owner")
-
-    if not (is_admin(interaction.user) or owner == caller):
-        await interaction.response.send_message("❌ Not authorized to stop that monitor.", ephemeral=True)
-        return
-
-    pname = info.get("process")
-    stopped = False
-    if pm2_available():
-        stopped = pm2_delete(pname)
-    else:
-        try:
-            subprocess.run(["pkill", "-f", f"mc_bot.js.*{pname}"], check=False)
-            stopped = True
-        except Exception:
-            stopped = False
-
-    monitors.pop(pname, None)
-    save_state()
-    await interaction.response.send_message(f"🛑 Monitor `{pname}` stopped.")
-
-@tree.command(name="status", description="Show professional bot + monitor status")
-async def cmd_status(interaction: discord.Interaction):
-    embed = discord.Embed(title="📊 Bot Status", color=0x2ecc71)
-    embed.add_field(name="🤖 Discord Bot", value="🟢 Online", inline=False)
-
-    mon = get_monitors_with_state()
-    if mon:
-        lines = []
-        for pname, info in mon.items():
-            owner = info.get("owner", "Unknown")
-            running = "🟢 Online" if info.get("running") else "🔴 Offline"
-            lines.append(f"{running} • <@{owner}> — `{info.get('ip','?')}:{info.get('port','?')}` ({info.get('version','?')}) | `{pname}`")
-        embed.add_field(name="🟩 Minecraft Monitors", value="\n".join(lines), inline=False)
-    else:
-        embed.add_field(name="🟩 Minecraft Monitors", value="No monitors running", inline=False)
-
-    embed.set_footer(text=f"Bots join as {MC_DEFAULT_USERNAME} • Managed by admins")
-    await interaction.response.send_message(embed=embed)
-
-# ---------------- shutdown ----------------
-def graceful_shutdown():
-    save_state()
-
-# ---------------- run ----------------
-if __name__ == "__main__":
-    load_state()
-    try:
-        bot.run(TOKEN)
-    finally:
-        graceful_shutdown()
+# =========================
+# RUN
+# =========================
+bot.run(TOKEN)
